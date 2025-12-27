@@ -24,8 +24,10 @@ import {
   LineElement,
   Tooltip,
   Legend,
+  TimeScale
 } from "chart.js";
 import { Line } from "react-chartjs-2";
+import "chartjs-adapter-date-fns";
 
 ChartJS.register(
   CategoryScale,
@@ -33,7 +35,8 @@ ChartJS.register(
   PointElement,
   LineElement,
   Tooltip,
-  Legend
+  Legend,
+  TimeScale
 );
 
 const OPTION_COLORS = [
@@ -218,55 +221,76 @@ export default function MarketDetailPage() {
   }, [market]);
 
   /* ---------- OPTIONS probability line chart ---------- */
-  const optionLineChartData = useMemo(() => {
-    if (!market || market.type !== "options" || votes.length === 0) return null;
+  const optionLineChartData: {
+  datasets: {
+    label: string;
+    data: { x: Date; y: number }[];
+    borderColor: string;
+    backgroundColor: string;
+    tension: number;
+    pointRadius: number;
+    borderWidth: number;
+  }[];
+  truncated: boolean;
+} | null = useMemo(() => {
+  if (!market || market.type !== "options" || votes.length === 0) return null;
 
-    const cumulative: Record<string, number> = {};
-    let totalStake = 0;
-    const timeline: Record<string, number>[] = [];
+  const cumulative: Record<string, number> = {};
+  let totalStake = 0;
+  const timeline: Record<string, number>[] = [];
 
-    votes.forEach((v) => {
-      cumulative[v.option] = (cumulative[v.option] || 0) + v.stake;
-      totalStake += v.stake;
-      const snapshot: Record<string, number> = {};
-      Object.keys(cumulative).forEach(opt => {
-        snapshot[opt] = (cumulative[opt] / totalStake);
-      });
-      timeline.push(snapshot);
+  votes.forEach(v => {
+    cumulative[v.option] = (cumulative[v.option] || 0) + v.stake;
+    totalStake += v.stake;
+    const snapshot: Record<string, number> = {};
+    Object.keys(cumulative).forEach(opt => {
+      snapshot[opt] = cumulative[opt] / totalStake;
     });
+    timeline.push(snapshot);
+  });
 
-    const latest = timeline[timeline.length - 1] || {};
-    const optionsToShow =
-      market.options.length > 4
-        ? Object.entries(latest)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3)
-            .map(([name]) => name)
-        : market.options.map(o => o.name);
-
-    return {
-      labels: votes.map((v) => new Date(v.createdAt.toMillis()).toLocaleTimeString()),
-
-  datasets: optionsToShow.map((opt, index) => {
-  // 🔥 take probability from already-calculated optionProbabilities
-  const currentProb =
-    optionProbabilities.find((o) => o.name === opt)?.probability ?? 0;
+  const latest = timeline[timeline.length - 1] || {};
+  const optionsToShow =
+    market.options.length > 4
+      ? Object.entries(latest)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([name]) => name)
+      : market.options.map(o => o.name);
 
   return {
-    label: `${opt} (${currentProb.toFixed(1)}%)`, // ✅ legend uses existing probability
-    data: timeline.map((t) => (t[opt] ?? 0) * 100), // ✅ convert once for chart
-    borderColor: OPTION_COLORS[index % OPTION_COLORS.length],
-    backgroundColor: OPTION_COLORS[index % OPTION_COLORS.length] + "33",
-    tension: 0.3,
-    pointRadius: 2,
-    borderWidth: 2,
+    datasets: optionsToShow.map((opt, index) => ({
+      label: opt,
+      data: votes.map(v => ({
+        x: v.createdAt.toDate(),
+        y: ((timeline[votes.indexOf(v)][opt] ?? 0) * 100),
+      })),
+      borderColor: OPTION_COLORS[index % OPTION_COLORS.length],
+      backgroundColor: OPTION_COLORS[index % OPTION_COLORS.length] + "33",
+      tension: 0.3,
+      pointRadius: 2,
+      borderWidth: 2,
+    })),
+    truncated: market.options.length > 4,
   };
-}),
+}, [market, votes, optionProbabilities]);
 
-
-      truncated: market.options.length > 4,
-    };
-  }, [market, votes]);
+const optionLineChartOptions = {
+  scales: {
+    x: {
+      type: "time" as const,
+      time: {
+        unit: "hour" as const,
+        tooltipFormat: "MMM d, HH:mm",
+      },
+      title: { display: true, text: "Time" },
+    },
+    y: {
+      beginAtZero: true,
+      title: { display: true, text: "Probability (%)" },
+    },
+  },
+};
 
   /* ---------- User payout ---------- */
   const userPayout = useMemo(() => {
@@ -289,6 +313,22 @@ export default function MarketDetailPage() {
 
     return 0;
   }, [market, userVotes]);
+
+  /* ---------- Volume ---------- */
+  const totalVolume = useMemo(() => {
+  if (!market) return 0;
+
+  if (market.type === "yesno") {
+    return market.yes + market.no;
+  }
+
+  if (market.type === "options") {
+    return market.options.reduce((sum, o) => sum + o.votes, 0);
+  }
+
+  return 0;
+}, [market]);
+
 
   const requireAuthOrRedirect = () => {
     if (!user) {
@@ -371,13 +411,54 @@ export default function MarketDetailPage() {
     return { yes: total > 0 ? (h.yes / total) * 100 : 0, no: total > 0 ? (h.no / total) * 100 : 0 };
   });
 
-  const lineChartData = {
-    labels: history.map((_, i) => `Vote ${i + 1}`),
-    datasets: [
-      { label: "YES Probability (%)", data: probabilityData.map(p => p.yes), borderColor: "#22c55e", tension: 0.3 },
-      { label: "NO Probability (%)", data: probabilityData.map(p => p.no), borderColor: "#ef4444", tension: 0.3 },
-    ],
-  };
+ 
+
+const lineChartData = {
+  datasets: [
+    {
+      label: "YES",
+      data: history.map(h => ({
+        x: h.createdAt.toDate(), // timestamp
+        y: h.yes + h.no > 0 ? (h.yes / (h.yes + h.no)) * 100 : 0,
+      })),
+      borderColor: "#22c55e",
+      backgroundColor: "#22c55e33",
+      tension: 0.3,
+      pointRadius: 2,
+      borderWidth: 2,
+    },
+    {
+      label: "NO",
+      data: history.map(h => ({
+        x: h.createdAt.toDate(),
+        y: h.yes + h.no > 0 ? (h.no / (h.yes + h.no)) * 100 : 0,
+      })),
+      borderColor: "#ef4444",
+      backgroundColor: "#ef444433",
+      tension: 0.3,
+      pointRadius: 2,
+      borderWidth: 2,
+    },
+  ],
+};
+
+const lineChartOptions = {
+  scales: {
+    x: {
+      type: "time" as const,
+      time: {
+        unit: "hour" as const, // Chart.js will auto-switch to "day" if needed
+        tooltipFormat: "MMM d, HH:mm",
+      },
+      title: { display: true, text: "Time" },
+    },
+    y: {
+      beginAtZero: true,
+      title: { display: true, text: "Probability (%)" },
+    },
+  },
+};
+
 
   return (
     <div className="min-h-screen p-6 max-w-3xl mx-auto">
@@ -403,11 +484,7 @@ export default function MarketDetailPage() {
         </div>
       )}
 
-      {/* Summary */}
-      <div className="mb-6">
-        <h2 className="font-semibold mb-2">Summary</h2>
-        <p className="text-gray-700">{market.summary}</p>
-      </div>
+      
 
       {/* Resolved + payout */}
       {market.resolved && (
@@ -425,44 +502,76 @@ export default function MarketDetailPage() {
         </>
       )}
 
+{/* Optional Probability */}
+
+      {market.type === "options" && (
+  <div className="mb-6">
+  
+
+  <div className="flex flex-wrap gap-2">
+    {optionProbabilities.map((opt, index) => (
+      <div
+        key={opt.id}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium"
+        style={{
+          backgroundColor: OPTION_COLORS[index % OPTION_COLORS.length] + "22",
+          color: OPTION_COLORS[index % OPTION_COLORS.length],
+        }}
+      >
+        <span>{opt.name}</span>
+        <span className="font-semibold">{opt.probability.toFixed(1)}%</span>
+      </div>
+    ))}
+  </div>
+</div>
+
+)}
+
+     {/* Current probabilities (smaller version) */}
+{market.type === "yesno" && (
+  <div className="mb-4 flex gap-2">
+    {/* YES pill */}
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-green-400 bg-green-50">
+      <span className="text-xs font-medium text-green-700">YES</span>
+      <span className="text-sm font-bold text-green-600">
+        {yesProbability.toFixed(1)}%
+      </span>
+    </div>
+
+    {/* NO pill */}
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-red-400 bg-red-50">
+      <span className="text-xs font-medium text-red-700">NO</span>
+      <span className="text-sm font-bold text-red-600">
+        {noProbability.toFixed(1)}%
+      </span>
+    </div>
+  </div>
+)}
+
       {/* Probability chart */}
-      <div className="mb-6">
-        <h2 className="font-semibold mb-2">Probability Over Time</h2>
-        {market.type === "yesno" && history.length > 0 && <Line data={lineChartData} />}
+      <div className="mb-2">
+       
+        {market.type === "yesno" && history.length > 0 && <Line data={lineChartData} options={lineChartOptions} />}
         {market.type === "options" && optionLineChartData && (
           <>
-            <Line data={optionLineChartData} />
-            {optionLineChartData.truncated && <p className="text-sm text-gray-500 mt-1">Showing top 3 options by probability</p>}
+          <Line data={optionLineChartData} options={optionLineChartOptions} />
+    {optionLineChartData.truncated && (
+      <p className="text-sm text-gray-500 mt-1">Showing top 3 options by probability</p>
+    )}
           </>
         )}
         {market.type === "options" && !optionLineChartData && <p>No probability history yet.</p>}
       </div>
 
-      {/* Current probabilities */}
-      {market.type === "yesno" && (
-        <div className="mb-6 grid grid-cols-2 gap-4">
-          <div className="p-4 rounded-lg border bg-green-50 border-green-400 text-center">
-            <p className="text-sm text-gray-600">YES Probability</p>
-            <p className="text-2xl font-bold text-green-600">{yesProbability.toFixed(1)}%</p>
-          </div>
-          <div className="p-4 rounded-lg border bg-red-50 border-red-400 text-center">
-            <p className="text-sm text-gray-600">NO Probability</p>
-            <p className="text-2xl font-bold text-red-600">{noProbability.toFixed(1)}%</p>
-          </div>
-        </div>
-      )}
 
-      {market.type === "options" && (
-        <div className="mb-6 space-y-3">
-          <h2 className="font-semibold">Option Probabilities</h2>
-          {optionProbabilities.map(opt => (
-            <div key={opt.id} className="flex justify-between items-center p-3 rounded border">
-              <span>{opt.name}</span>
-              <span className="font-bold">{opt.probability.toFixed(1)}%</span>
-            </div>
-          ))}
-        </div>
-      )}
+<div className="mb-2 text-sm text-gray-600 flex items-center gap-2">
+  <span className="font-medium">📊 Volume:</span>
+  <span className="font-semibold">{totalVolume}</span>
+  <span>credits staked</span>
+</div>
+
+
+
 
       {/* Stake input */}
       <div className="mb-4">
@@ -526,8 +635,16 @@ export default function MarketDetailPage() {
             >
               {voting ? "Placing bet..." : `${opt.name} (${opt.votes})`}
             </button>
+
+            
           ))
         )}
+      </div>
+
+      {/* Summary */}
+      <div className="mb-6">
+        <h2 className="font-semibold mb-2">Summary</h2>
+        <p className="text-gray-700">{market.summary}</p>
       </div>
     </div>
   );
