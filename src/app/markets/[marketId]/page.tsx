@@ -558,7 +558,7 @@ const lineChartOptions = {
     {optionLineChartData.truncated && (
       <p className="text-sm text-gray-500 mt-1">Showing top 3 options by probability</p>
     )}
-          </>
+          </> 
         )}
         {market.type === "options" && !optionLineChartData && <p>No probability history yet.</p>}
       </div>
