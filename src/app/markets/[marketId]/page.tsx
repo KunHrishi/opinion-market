@@ -549,7 +549,7 @@ const lineChartOptions = {
 )}
 
       {/* Probability chart */}
-      <div className="mb-2">
+      <div className="mb-2h-[360px] md:h-[380px]">
        
         {market.type === "yesno" && history.length > 0 && <Line data={lineChartData} options={lineChartOptions} />}
         {market.type === "options" && optionLineChartData && (

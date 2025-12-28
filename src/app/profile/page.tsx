@@ -70,12 +70,82 @@ export default function ProfilePage() {
   >([]);
 
   const [activeTab, setActiveTab] = useState<
-    "overview" | "open" | "resolved" | "transactions" | "graph"
+    "overview" | "calendar" | "open" | "resolved" | "transactions"
   >("overview");
+  /* ---------- Swipe Tabs ---------- */
+
+const tabs: Array<
+  "overview" | "calendar" |"open" | "resolved" | "transactions" 
+> = ["overview", "calendar", "open", "resolved", "transactions"];
+
+const [touchStartX, setTouchStartX] = useState<number | null>(null);
+const [touchEndX, setTouchEndX] = useState<number | null>(null);
+
+const MIN_SWIPE_DISTANCE = 50;
+
+const handleTouchStart = (e: React.TouchEvent) => {
+  setTouchEndX(null);
+  setTouchStartX(e.targetTouches[0].clientX);
+};
+
+const handleTouchMove = (e: React.TouchEvent) => {
+  setTouchEndX(e.targetTouches[0].clientX);
+};
+
+const handleTouchEnd = () => {
+  if (touchStartX === null || touchEndX === null) return;
+
+  const distance = touchStartX - touchEndX;
+  const currentIndex = tabs.indexOf(activeTab);
+
+  // swipe left → next tab
+  if (distance > MIN_SWIPE_DISTANCE && currentIndex < tabs.length - 1) {
+    setActiveTab(tabs[currentIndex + 1]);
+  }
+
+  // swipe right → previous tab
+  if (distance < -MIN_SWIPE_DISTANCE && currentIndex > 0) {
+    setActiveTab(tabs[currentIndex - 1]);
+  }
+  };
+const prevMonth = () => {
+  if (!joinedAt) return;
+
+  const prev = new Date(
+    calendarMonth.getFullYear(),
+    calendarMonth.getMonth() - 1,
+    1
+  );
+
+  const joinMonth = new Date(
+    joinedAt.getFullYear(),
+    joinedAt.getMonth(),
+    1
+  );
+
+  if (prev >= joinMonth) {
+    setCalendarMonth(prev);
+  }
+};
+
+
+const nextMonth = () => {
+  const next = new Date(
+    calendarMonth.getFullYear(),
+    calendarMonth.getMonth() + 1,
+    1
+  );
+
+  if (next <= new Date()) {
+    setCalendarMonth(next);
+  }
+};
+
 
   /* ---------- Advanced Stats ---------- */
 
   const [netProfitLoss, setNetProfitLoss] = useState(0);
+  const [activeStake, setActiveStake] = useState(0);
   const [avgStake, setAvgStake] = useState(0);
   const [avgProfit, setAvgProfit] = useState(0);
 
@@ -83,13 +153,16 @@ export default function ProfilePage() {
     "Conservative" | "Balanced" | "Aggressive"
   >("Balanced");
 
-  const [monthlyPL, setMonthlyPL] = useState<
-    { month: string; profit: number }[]
-  >([]);
+  const [dailyPL, setDailyPL] = useState<Record<string, number>>({});
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
+
+
 
   const [name, setName] = useState<string>("");
 const [dob, setDob] = useState<string>("");
 const [dateJoined, setDateJoined] = useState<string>("");
+const [joinedAt, setJoinedAt] = useState<Date | null>(null);
+
 
   /* ---------- Auth Guard ---------- */
 
@@ -112,11 +185,19 @@ if (userSnap.exists()) {
   setName(u.name || "Anonymous");
   setDob(u.dob || "—");
 
-  if (u.createdAt?.toDate) {
-    setDateJoined(
-      u.createdAt.toDate().toLocaleDateString()
-    );
-  }
+if (u.createdAt?.toDate) {
+  const joinedDate = u.createdAt.toDate();
+
+  setJoinedAt(joinedDate);
+  setDateJoined(joinedDate.toLocaleDateString());
+
+  // start calendar at join month
+  setCalendarMonth(
+    new Date(joinedDate.getFullYear(), joinedDate.getMonth(), 1)
+  );
+}
+
+
 }
 
 
@@ -141,11 +222,11 @@ if (userSnap.exists()) {
       let totalStake = 0;
       let totalProfit = 0;
       let resolvedCount = 0;
-
+let activeStakeTemp = 0;
       const activeTemp: any[] = [];
       const resolvedTemp: any[] = [];
       const txTemp: any[] = [];
-      const monthlyMap: Record<string, number> = {};
+     const dailyMap: Record<string, number> = {};
 
       for (const marketId of Object.keys(votesByMarket)) {
         const marketSnap = await getDoc(doc(db, "markets", marketId));
@@ -153,6 +234,14 @@ if (userSnap.exists()) {
 
         const market = marketSnap.data() as Market;
         const votes = votesByMarket[marketId];
+
+// add to ACTIVE stake if market is NOT resolved
+if (!market.resolved) {
+  votes.forEach(v => {
+    activeStakeTemp += v.stake;
+  });
+}
+
 
         let profit = 0;
         votes.forEach((v) => (totalStake += v.stake));
@@ -209,8 +298,9 @@ if (userSnap.exists()) {
           totalProfit += profit;
           resolvedCount++;
 
-          const month = new Date().toISOString().slice(0, 7);
-          monthlyMap[month] = (monthlyMap[month] || 0) + profit;
+         const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+dailyMap[day] = (dailyMap[day] || 0) + profit;
+
         }
       }
 
@@ -227,10 +317,17 @@ if (userSnap.exists()) {
       setMarketsParticipated(activeTemp.length + resolvedTemp.length);
 
       setNetProfitLoss(Math.round(totalProfit));
+      setActiveStake(activeStakeTemp);
 
-      setAvgStake(
-        resolvedCount > 0 ? Math.round(totalStake / resolvedCount) : 0
-      );
+
+      const totalMarkets = activeTemp.length + resolvedTemp.length;
+
+setAvgStake(
+  totalMarkets > 0
+    ? Math.round(totalStake / totalMarkets)
+    : 0
+);
+
 
       setAvgProfit(
         resolvedCount > 0 ? Math.round(totalProfit / resolvedCount) : 0
@@ -242,12 +339,8 @@ if (userSnap.exists()) {
       else if (ratio < 0.15) setRiskScore("Balanced");
       else setRiskScore("Aggressive");
 
-      setMonthlyPL(
-        Object.entries(monthlyMap).map(([m, p]) => ({
-          month: m,
-          profit: Math.round(p),
-        }))
-      );
+    setDailyPL(dailyMap);
+
 
       /* ---------- Streaks ---------- */
 
@@ -288,35 +381,123 @@ if (userSnap.exists()) {
     router.push(`/markets/${marketId}`);
   };
 
-  /* ---------- Graph Data ---------- */
-  const graphData: GraphPoint[] = [];
-  let cumulative = 0;
-  monthlyPL.forEach((m) => {
-    cumulative += m.profit;
-    graphData.push({ month: m.month, credits: cumulative });
-  });
+ 
 
   /* ---------- Loading State ---------- */
 
+  
   if (!user || loading) {
     return (
       <p className="p-6 text-center text-gray-500">Loading profile...</p>
     );
   }
+const generateMonthDays = (month: Date) => {
+  const days: { date: string; profit: number }[] = [];
+
+  const year = month.getFullYear();
+  const m = month.getMonth();
+
+  const firstDay = new Date(year, m, 1);
+  const lastDay = new Date(year, m + 1, 0);
+
+  for (let d = new Date(firstDay); d <= lastDay; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    days.push({
+      date: key,
+      profit: dailyPL[key] || 0,
+    });
+  }
+
+  return days;
+};
+
+const calendarDays = generateMonthDays(calendarMonth);
+
+const monthlyPL = calendarDays.reduce((s, d) => s + d.profit, 0);
+
+
+const getColor = (profit: number) => {
+  if (profit === 0) return "bg-gray-200";
+  if (profit < 0) return "bg-red-400";
+  if (profit < 50) return "bg-green-300";
+  if (profit < 200) return "bg-green-500";
+  return "bg-green-700";
+};
+
 
   /* ---------- UI ---------- */
 
   return (
     <div className="min-h-screen flex justify-start p-6">
-   <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-4xl">
-        <h1 className="text-2xl font-bold mb-4 text-center">Profile</h1>
+ 
 
-        <p>
-          <strong>Email:</strong> {user.email}
-        </p>
-        <p className="mb-4">
-          <strong>Credits:</strong> {credits}
-        </p>
+   <div className="bg-white p-6 rounded-lg shadow-md w-full">
+
+       
+{/* ===== PROFILE HEADER ===== */}
+{/* ===== PROFILE HEADER ===== */}
+<div className="flex items-start gap-4 mb-6">
+  {/* Profile Picture */}
+  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold shadow-md">
+    {name ? name[0].toUpperCase() : "U"}
+  </div>
+
+  {/* User Info + Stats */}
+  <div className="flex-1">
+    <h2 className="text-lg font-semibold leading-tight">
+      {name || "Anonymous"}
+    </h2>
+
+    <p className="text-sm text-gray-500 mt-0.5">
+      Joined {dateJoined || "—"}
+    </p>
+
+    {/* INLINE STATS */}
+{/* STATS BOXES */}
+<div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+  {/* Credits */}
+  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
+    <div className="text-xs text-gray-500">Credits</div>
+    <div className="text-xl font-bold text-blue-600">
+      {credits}
+    </div>
+  </div>
+
+  {/* Net P/L */}
+  <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+    <div className="text-xs text-gray-500">Net P/L</div>
+    <div
+      className={`text-xl font-bold ${
+        netProfitLoss >= 0 ? "text-green-600" : "text-red-600"
+      }`}
+    >
+      {netProfitLoss >= 0 ? `+${netProfitLoss}` : netProfitLoss}
+    </div>
+  </div>
+
+  {/* At Stake */}
+  <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-center">
+    <div className="text-xs text-gray-500">At Stake</div>
+    <div className="text-xl font-bold text-yellow-600">
+      {activeStake}
+    </div>
+  </div>
+
+  {/* Markets */}
+  <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-center">
+    <div className="text-xs text-gray-500">Markets</div>
+    <div className="text-xl font-bold text-purple-600">
+      {marketsParticipated}
+    </div>
+  </div>
+</div>
+
+
+    
+  </div>
+</div>
+
+
 
 {/* ===== PROFILE BADGES (ABOVE OVERVIEW) ===== */}
 <div className="mb-4 flex flex-wrap gap-2">
@@ -340,24 +521,30 @@ if (userSnap.exists()) {
 
 
         {/* Tabs */}
-        <div className="flex mb-6 border rounded overflow-hidden">
-          {["overview", "open", "resolved", "transactions", "graph"].map(
-            (t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTab(t as any)}
-                className={`flex-1 p-2 text-sm font-semibold ${
-                  activeTab === t
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-100"
-                }`}
-              >
-                {t.toUpperCase()}
-              </button>
-            )
-          )}
-        </div>
+     <div className="mb-6 border rounded overflow-x-auto">
+  <div className="flex min-w-max">
+    {["overview","calendar", "open", "resolved", "transactions"].map((t) => (
+      <button
+        key={t}
+        onClick={() => setActiveTab(t as any)}
+        className={`px-4 py-2 text-sm font-semibold whitespace-nowrap ${
+          activeTab === t
+            ? "bg-blue-600 text-white"
+            : "bg-gray-100"
+        }`}
+      >
+        {t.toUpperCase()}
+      </button>
+    ))}
+  </div>
+</div>
 
+
+<div
+  onTouchStart={handleTouchStart}
+  onTouchMove={handleTouchMove}
+  onTouchEnd={handleTouchEnd}
+>
         {/* Overview Tab */}
         {activeTab === "overview" && (
           <div className="space-y-2">
@@ -372,7 +559,108 @@ if (userSnap.exists()) {
             <p>📈 Avg Profit: {avgProfit}</p>
             <p>⚠️ Risk: {riskScore}</p>
           </div>
+          
         )}
+
+        {/* Calendar Tab */}
+{activeTab === "calendar" && (
+  <div>
+    {/* Month Header */}
+    <div className="flex justify-between items-center mb-3">
+      <button
+        onClick={prevMonth}
+        className="text-sm text-blue-600"
+      >
+        ←
+      </button>
+
+      <div className="text-sm font-semibold">
+        {calendarMonth.toLocaleString("default", {
+          month: "long",
+          year: "numeric",
+        })}
+      </div>
+
+      <button
+        onClick={nextMonth}
+        className="text-sm text-blue-600"
+      >
+        →
+      </button>
+    </div>
+
+    {/* Monthly P/L */}
+    <div
+      className={`text-center text-lg font-bold mb-3 ${
+        monthlyPL >= 0 ? "text-green-600" : "text-red-600"
+      }`}
+    >
+      {monthlyPL >= 0 ? "+" : ""}
+      {monthlyPL} credits
+    </div>
+
+    {/* Calendar Grid */}
+
+
+{/* Calendar Grid */}
+<div className="grid grid-cols-7 gap-x-[6px] gap-y-[6px]">
+  {calendarDays.map((d) => {
+    const dayNumber = new Date(d.date).getDate();
+
+    return (
+      <div
+        key={d.date}
+        title={`${d.date}: ${d.profit >= 0 ? "+" : ""}${d.profit}`}
+        className={`w-14 h-14 rounded-xl p-2 flex flex-col justify-between ${getColor(
+          d.profit
+        )}`}
+      >
+        {/* Date */}
+        <div className="text-[12px] text-gray-800 font-semibold">
+          {dayNumber}
+        </div>
+
+        {/* P/L */}
+        <div
+          className={`text-[13px] font-bold text-right ${
+            d.profit > 0
+              ? "text-green-900"
+              : d.profit < 0
+              ? "text-red-900"
+              : "text-gray-600"
+          }`}
+        >
+          {d.profit !== 0 ? (
+            <>
+              {d.profit > 0 ? "+" : ""}
+              {Math.round(d.profit)}
+            </>
+          ) : (
+            "—"
+          )}
+        </div>
+      </div>
+    );
+  })}
+</div>
+
+
+
+
+
+    {/* Legend */}
+    <div className="flex items-center justify-center gap-2 text-xs text-gray-500 mt-3">
+      <span>Less</span>
+      <div className="w-3 h-3 bg-gray-200 rounded-sm" />
+      <div className="w-3 h-3 bg-green-300 rounded-sm" />
+      <div className="w-3 h-3 bg-green-500 rounded-sm" />
+      <div className="w-3 h-3 bg-green-700 rounded-sm" />
+      <span>More</span>
+    </div>
+  </div>
+)}
+
+
 
         {/* Open Tab */}
         {activeTab === "open" && (
@@ -450,52 +738,9 @@ if (userSnap.exists()) {
         )}
 
         {/* Graph Tab */}
-        {activeTab === "graph" && (
-  <div className="w-full">
-    <div className="w-full h-64 md:h-80">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={graphData}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="month" />
-          <YAxis />
-          <Tooltip />
-          <Line
-            type="monotone"
-            dataKey="credits"
-            stroke="#3b82f6"
-            strokeWidth={2}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-
-    {/* Badges */}
-    <div className="mt-4 flex flex-wrap gap-2">
-      {winStreak >= 5 && (
-        <span className="bg-green-200 text-green-800 px-2 py-1 rounded-full text-sm">
-          🔥 Win Streak
-        </span>
-      )}
-      {wins >= 10 && (
-        <span className="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-sm">
-          🏆 Expert Predictor
-        </span>
-      )}
-      {breakeven >= 10 && (
-        <span className="bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full text-sm">
-          ➖ Steady
-        </span>
-      )}
-      {losses === 0 && marketsParticipated > 0 && (
-        <span className="bg-purple-200 text-purple-800 px-2 py-1 rounded-full text-sm">
-          🛡️ No Loss
-        </span>
-      )}
-    </div>
-  </div>
-)}
 
 
+</div>
         {/* Logout Button */}
         <button
           onClick={handleLogout}
