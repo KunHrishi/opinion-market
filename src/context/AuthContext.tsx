@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { auth, db } from "../lib/firebase";
+import type { UserCredential } from "firebase/auth";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -9,7 +10,7 @@ import {
   onAuthStateChanged,
   User,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 
 interface AuthContextType {
   user: User | null;
@@ -17,7 +18,7 @@ interface AuthContextType {
   setCredits: React.Dispatch<React.SetStateAction<number>>;
   isAdmin: boolean;
   spendCredit: () => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string) => Promise<UserCredential>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -30,15 +31,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
 
   // 🔑 Create user + initial credits
-  const signup = async (email: string, password: string) => {
+  const signup = async (
+    email: string,
+    password: string
+  ): Promise<UserCredential> => {
     const res = await createUserWithEmailAndPassword(auth, email, password);
 
     await setDoc(doc(db, "users", res.user.uid), {
       email,
-      credits: 100,
-      admin: false, // 👈 default admin flag
+      credits: 10000,
+      admin: false,
       createdAt: new Date(),
     });
+
+    return res; // ✅ REQUIRED for caller
   };
 
   // 🔑 Login
@@ -53,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAdmin(false);
   };
 
-  // 💳 Deduct credit (spendCredit)
+  // 💳 Deduct credit
   const spendCredit = async () => {
     if (!user || credits <= 0) return;
 
@@ -62,17 +68,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCredits((prev) => prev - 1);
   };
 
-  // 🔄 Auth listener + real-time credits update
+  // 🔄 Auth listener + real-time updates
   useEffect(() => {
     let unsubscribeUserSnap: (() => void) | null = null;
 
-    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
 
       if (firebaseUser) {
         const userRef = doc(db, "users", firebaseUser.uid);
 
-        // 🔥 Listen for real-time updates to credits & admin
         unsubscribeUserSnap = onSnapshot(userRef, (snap) => {
           if (snap.exists()) {
             const data = snap.data();

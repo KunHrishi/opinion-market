@@ -3,11 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 export default function SignupPage() {
   const { signup } = useAuth();
   const router = useRouter();
 
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -18,8 +21,40 @@ export default function SignupPage() {
     setError("");
     setLoading(true);
 
+    const cleanUsername = username.trim().toLowerCase();
+
+    if (cleanUsername.length < 3) {
+      setError("Username must be at least 3 characters");
+      setLoading(false);
+      return;
+    }
+
     try {
-      await signup(email, password);
+      // 🔍 Check if username already exists
+      const usernameRef = doc(db, "usernames", cleanUsername);
+      const usernameSnap = await getDoc(usernameRef);
+
+      if (usernameSnap.exists()) {
+        setError("Username already taken");
+        setLoading(false);
+        return;
+      }
+
+      // 🔐 Create auth account
+      const userCredential = await signup(email, password);
+      const uid = userCredential.user.uid;
+
+      // 🧾 Save username → uid mapping
+      await setDoc(usernameRef, { uid });
+
+      // 🧾 Save user profile
+      await setDoc(
+  doc(db, "users", uid),
+  { username: cleanUsername },
+  { merge: true }
+);
+
+
       router.push("/");
     } catch (err: any) {
       setError(err.message || "Signup failed");
@@ -41,6 +76,15 @@ export default function SignupPage() {
         {error && (
           <p className="text-red-500 text-sm mb-3">{error}</p>
         )}
+
+        <input
+          type="text"
+          placeholder="Username"
+          className="w-full p-2 border rounded mb-3"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+        />
 
         <input
           type="email"

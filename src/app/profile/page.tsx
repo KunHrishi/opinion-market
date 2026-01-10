@@ -10,6 +10,13 @@ import {
   getDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import {
+  LayoutDashboard,
+  CalendarDays,
+  FolderOpen,
+  CheckCircle2,
+  ArrowLeftRight,
+} from "lucide-react";
 
 import {
   LineChart,
@@ -73,6 +80,8 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<
     "overview" | "calendar" | "open" | "resolved" | "transactions"
   >("overview");
+
+  
   /* ---------- Swipe Tabs ---------- */
 
 const tabs: Array<
@@ -183,7 +192,7 @@ const userSnap = await getDoc(doc(db, "users", user.uid));
 if (userSnap.exists()) {
   const u = userSnap.data();
 
-  setName(u.name || "Anonymous");
+  setName(u.username || "Anonymous");
   setDob(u.dob || "—");
 
 if (u.createdAt?.toDate) {
@@ -431,6 +440,13 @@ const getColor = (profit: number) => {
 
 
   /* ---------- UI ---------- */
+const tabConfig = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "open", label: "Open", icon: FolderOpen },
+  { id: "resolved", label: "Resolved", icon: CheckCircle2 },
+  { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
+] as const;
 
   return (
     <div className="min-h-screen flex justify-start p-6">
@@ -526,23 +542,32 @@ const getColor = (profit: number) => {
 
 
         {/* Tabs */}
-     <div className="mb-6 border rounded overflow-x-auto">
-  <div className="flex min-w-max">
-    {["overview","calendar", "open", "resolved", "transactions"].map((t) => (
-      <button
-        key={t}
-        onClick={() => setActiveTab(t as any)}
-        className={`px-4 py-2 text-sm font-semibold whitespace-nowrap ${
-          activeTab === t
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100"
-        }`}
-      >
-        {t.toUpperCase()}
-      </button>
-    ))}
+ {/* Tabs */}
+<div className="mb-6 border-b">
+  <div className="flex justify-between sm:justify-start sm:gap-6">
+    {tabConfig.map((tab) => {
+      const Icon = tab.icon;
+      const active = activeTab === tab.id;
+
+      return (
+        <button
+          key={tab.id}
+          onClick={() => setActiveTab(tab.id)}
+          className={`flex flex-col sm:flex-row items-center gap-1 px-3 py-2 text-xs sm:text-sm
+            ${
+              active
+                ? "text-blue-600 border-b-2 border-blue-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+        >
+          <Icon size={18} />
+          <span className="hidden sm:inline">{tab.label}</span>
+        </button>
+      );
+    })}
   </div>
 </div>
+
 
 
 <div
