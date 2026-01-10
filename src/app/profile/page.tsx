@@ -28,6 +28,7 @@ interface Market {
   type: "yesno" | "options";
   resolved: boolean;
   winner?: string;
+  resolvedAt?: any; // Firestore Timestamp
 }
 
 interface UserVote {
@@ -298,8 +299,12 @@ if (!market.resolved) {
           totalProfit += profit;
           resolvedCount++;
 
-         const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-dailyMap[day] = (dailyMap[day] || 0) + profit;
+         if (market.resolvedAt?.toDate) {
+  const resolvedDate = market.resolvedAt.toDate();
+  const dayKey = resolvedDate.toISOString().slice(0, 10); // YYYY-MM-DD
+
+  dailyMap[dayKey] = (dailyMap[dayKey] || 0) + profit;
+}
 
         }
       }

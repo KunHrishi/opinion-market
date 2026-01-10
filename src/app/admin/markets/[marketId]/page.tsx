@@ -10,6 +10,7 @@ import {
   getDocs,
   writeBatch,
   increment,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
@@ -22,7 +23,6 @@ import {
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
 import { useAuth } from "@/context/AuthContext";
-import { Timestamp } from "firebase/firestore";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
@@ -87,7 +87,6 @@ export default function AdminMarketDetailPage() {
   const [market, setMarket] = useState<Market | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
-
   const [timeLeft, setTimeLeft] = useState<string | null>(null);
 
   useEffect(() => {
@@ -95,16 +94,16 @@ export default function AdminMarketDetailPage() {
 
     const fetchMarket = async () => {
       setLoading(true);
-      const docRef = doc(db, "markets", marketId as string);
-      const snapshot = await getDoc(docRef);
+      const ref = doc(db, "markets", marketId as string);
+      const snap = await getDoc(ref);
 
-      if (!snapshot.exists()) {
+      if (!snap.exists()) {
         alert("Market not found");
         router.push("/admin/markets");
         return;
       }
 
-      setMarket(snapshot.data() as Market);
+      setMarket(snap.data() as Market);
       setLoading(false);
     };
 
@@ -115,11 +114,7 @@ export default function AdminMarketDetailPage() {
      COUNTDOWN CLOCK
      ========================= */
   useEffect(() => {
-    if (
-      !market?.closeTime ||
-      market.resolved ||
-      market.status === "CLOSED"
-    ) {
+    if (!market?.closeTime || market.resolved || market.status === "CLOSED") {
       setTimeLeft(null);
       return;
     }
@@ -150,6 +145,14 @@ export default function AdminMarketDetailPage() {
   }
 
   /* =========================
+     HELPERS
+     ========================= */
+
+  const formattedCloseTime = market.closeTime
+    ? market.closeTime.toDate().toLocaleString()
+    : "NA";
+
+  /* =========================
      ACTIONS
      ========================= */
 
@@ -167,9 +170,7 @@ export default function AdminMarketDetailPage() {
     setUpdating(true);
 
     const ref = doc(db, "markets", marketId as string);
-    await updateDoc(ref, {
-      featured: !market.featured,
-    });
+    await updateDoc(ref, { featured: !market.featured });
 
     const snap = await getDoc(ref);
     setMarket(snap.data() as Market);
@@ -178,7 +179,6 @@ export default function AdminMarketDetailPage() {
 
   const handleResolveMarket = async (winner: string) => {
     setUpdating(true);
-
     const marketRef = doc(db, "markets", marketId as string);
 
     await updateDoc(marketRef, {
@@ -194,7 +194,6 @@ export default function AdminMarketDetailPage() {
 
     if (!votesSnap.empty) {
       const batch = writeBatch(db);
-
       const votes = votesSnap.docs.map((d) => ({
         id: d.id,
         ...d.data(),
@@ -231,6 +230,7 @@ export default function AdminMarketDetailPage() {
   /* =========================
      CHART
      ========================= */
+
   const chartData =
     market.type === "yesno"
       ? {
@@ -265,17 +265,20 @@ export default function AdminMarketDetailPage() {
 
   return (
     <div className="min-h-screen p-6 max-w-3xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-2">
         <h1 className="text-3xl font-bold">{market.title}</h1>
         <span
           className={`px-3 py-1 rounded-full text-white ${
-            market.status === "OPEN"
-              ? "bg-green-500"
-              : "bg-yellow-500"
+            market.status === "OPEN" ? "bg-green-500" : "bg-yellow-500"
           }`}
         >
           {market.status}
         </span>
+      </div>
+
+      {/* Close Time */}
+      <div className="mb-3 text-sm text-gray-600">
+        <strong>Closes at:</strong> {formattedCloseTime}
       </div>
 
       {/* Countdown */}
