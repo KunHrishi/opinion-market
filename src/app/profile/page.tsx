@@ -10,6 +10,7 @@ import {
   getDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { Settings } from "lucide-react";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -52,8 +53,10 @@ interface GraphPoint {
 /* ---------- Component ---------- */
 
 export default function ProfilePage() {
-  const { user, logout, credits } = useAuth();
+  const { user, logout, credits, authLoading } = useAuth();
+  
   const router = useRouter();
+  
 
   const [loading, setLoading] = useState(true);
 
@@ -177,8 +180,10 @@ const [joinedAt, setJoinedAt] = useState<Date | null>(null);
   /* ---------- Auth Guard ---------- */
 
   useEffect(() => {
-    if (!user) router.push("/login");
-  }, [user, router]);
+  if (!authLoading && !user) {
+    router.push("/login");
+  }
+}, [user, authLoading, router]);
 
   /* ---------- Fetch Profile Data ---------- */
 
@@ -400,11 +405,14 @@ setAvgStake(
   /* ---------- Loading State ---------- */
 
   
-  if (!user || loading) {
-    return (
-      <p className="p-6 text-center text-gray-500">Loading profile...</p>
-    );
-  }
+  if (authLoading || loading) {
+  return <p className="p-6 text-center text-gray-500">Loading profile...</p>;
+}
+
+if (!user) {
+  return null; // redirect already triggered
+}
+
 const generateMonthDays = (month: Date) => {
   const days: { date: string; profit: number }[] = [];
 
@@ -537,6 +545,18 @@ const tabConfig = [
   <span className="bg-purple-200 text-purple-800 px-3 py-1 rounded-full text-sm">
     🛡️ No Losses
   </span>
+</div>
+
+
+{/* Settings Button */}
+<div className="mb-6 flex justify-start">
+  <button
+    onClick={() => router.push("/settings")}
+    className="flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+  >
+    <Settings size={16} />
+    Settings
+  </button>
 </div>
 
 
@@ -771,13 +791,7 @@ const tabConfig = [
 
 
 </div>
-        {/* Logout Button */}
-        <button
-          onClick={handleLogout}
-          className="w-full mt-6 bg-red-600 text-white p-2 rounded"
-        >
-          Logout
-        </button>
+        
       </div>
     </div>
   );

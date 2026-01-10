@@ -17,6 +17,7 @@ interface AuthContextType {
   credits: number;
   setCredits: React.Dispatch<React.SetStateAction<number>>;
   isAdmin: boolean;
+  authLoading: boolean;
   spendCredit: () => Promise<void>;
   signup: (email: string, password: string) => Promise<UserCredential>;
   login: (email: string, password: string) => Promise<void>;
@@ -29,6 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [credits, setCredits] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
 
   // 🔑 Create user + initial credits
   const signup = async (
@@ -89,6 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setCredits(0);
         setIsAdmin(false);
       }
+
+      // ✅ auth state resolved
+      setAuthLoading(false);
     });
 
     return () => {
@@ -104,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credits,
         setCredits,
         isAdmin,
+        authLoading,
         spendCredit,
         signup,
         login,
