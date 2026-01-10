@@ -436,7 +436,7 @@ const getColor = (profit: number) => {
     <div className="min-h-screen flex justify-start p-6">
  
 
-   <div className="bg-white p-6 rounded-lg shadow-md w-full">
+   <div className="w-full">
 
        
 {/* ===== PROFILE HEADER ===== */}
