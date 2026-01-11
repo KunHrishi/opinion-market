@@ -9,10 +9,10 @@ export default function Header() {
   const [open, setOpen] = useState(false);
 
   return (
-    <header className="bg-white border-b p-4 flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-0">
+    <header className="bg-white border-b p-4 flex justify-between items-center gap-2 sm:gap-0">
       {/* Logo */}
       <Link href="/" className="font-bold text-lg">
-        Prediction Market
+        Prediction
       </Link>
 
       {/* Navigation */}
