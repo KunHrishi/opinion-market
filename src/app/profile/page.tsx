@@ -11,6 +11,8 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Settings } from "lucide-react";
+import { evaluateBadges } from "@/lib/evaluateBadges";
+import { arrayUnion, updateDoc } from "firebase/firestore";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -168,6 +170,8 @@ const nextMonth = () => {
 
   const [dailyPL, setDailyPL] = useState<Record<string, number>>({});
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
+  const [badges, setBadges] = useState<string[]>([]);
+
 
 
 
@@ -200,6 +204,7 @@ if (userSnap.exists()) {
   setName(u.username || "Anonymous");
   setDob(u.dob || "—");
 
+  setBadges(u.badges || []);
 if (u.createdAt?.toDate) {
   const joinedDate = u.createdAt.toDate();
 
@@ -382,11 +387,54 @@ setAvgStake(
       setWinStreak(recent);
       setBestStreak(best);
 
+      /* ---------- BADGE EVALUATION & SAVE ---------- */
+
+      if (userSnap.exists()) {
+        const u = userSnap.data();
+        const userRef = doc(db, "users", user.uid);
+
+        const existingBadges: string[] = u.badges || [];
+
+        const eligibleBadges = evaluateBadges({
+          marketsParticipated: activeTemp.length + resolvedTemp.length,
+          wins: win,
+          losses: loss,
+          breakeven: be,
+          winStreak: recent,
+          bestStreak: best,
+          netProfitLoss: Math.round(totalProfit),
+          avgStake:
+            activeTemp.length + resolvedTemp.length > 0
+              ? Math.round(totalStake / (activeTemp.length + resolvedTemp.length))
+              : 0,
+          avgProfit:
+            resolvedCount > 0 ? Math.round(totalProfit / resolvedCount) : 0,
+          riskScore,
+          joinedAt: u.createdAt?.toDate?.() ?? null,
+        });
+
+        const newBadges = eligibleBadges.filter(
+          (b) => !existingBadges.includes(b)
+        );
+
+        if (newBadges.length > 0) {
+          await updateDoc(userRef, {
+            badges: arrayUnion(...newBadges),
+          });
+        }
+      }
+
+
       setLoading(false);
+    
+    
+    
     };
 
     fetchStats();
   }, [user, credits]);
+
+  
 
   /* ---------- Logout ---------- */
 
@@ -529,23 +577,32 @@ const tabConfig = [
 
 
 {/* ===== PROFILE BADGES (ABOVE OVERVIEW) ===== */}
-<div className="mb-4 flex flex-wrap gap-2">
-  <span className="bg-green-200 text-green-800 px-3 py-1 rounded-full text-sm">
-    🔥 Win Streak
-  </span>
+{badges.length > 0 && (
+  <div className="mb-4">
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="text-sm font-semibold text-gray-700">Badges</h3>
+      <button
+        onClick={() => router.push("/badges")}
+        className="text-xs text-blue-600"
+      >
+        View all →
+      </button>
+    </div>
 
-  <span className="bg-blue-200 text-blue-800 px-3 py-1 rounded-full text-sm">
-    🏆 Sharp Predictor
-  </span>
+    <div className="flex flex-wrap gap-2">
+      {badges.slice(0, 6).map((badge, i) => (
+        <span
+          key={i}
+          className="px-2 py-1 text-xs rounded-full bg-yellow-100 border border-yellow-400 text-yellow-800"
+        >
+          {badge}
+        </span>
+      ))}
+    </div>
+  </div>
+)}
 
-  <span className="bg-yellow-200 text-yellow-800 px-3 py-1 rounded-full text-sm">
-    ➖ Steady Player
-  </span>
 
-  <span className="bg-purple-200 text-purple-800 px-3 py-1 rounded-full text-sm">
-    🛡️ No Losses
-  </span>
-</div>
 
 
 {/* Settings Button */}

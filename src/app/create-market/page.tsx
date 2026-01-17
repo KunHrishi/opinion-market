@@ -153,16 +153,23 @@ export default function CreateMarketPage() {
         createdBy: user.uid,
       };
 
-      if (type === "yesno") {
-        marketData.yes = 0;
-        marketData.no = 0;
-      } else {
-        marketData.options = options.map((opt) => ({
-          id: uuid(),
-          name: opt,
-          votes: 0,
-        }));
-      }
+    if (type === "yesno") {
+  // OLD fields (for compatibility, charts, legacy UI)
+  marketData.yes = 0;
+  marketData.no = 0;
+
+  // ✅ NEW LMSR fields (used by trading engine)
+  marketData.yesShares = 0;
+  marketData.noShares = 0;
+  marketData.liquidity = 100; // default liquidity
+} else {
+  marketData.options = options.map((opt) => ({
+    id: uuid(),
+    name: opt,
+    votes: 0,
+  }));
+}
+
 
       await addDoc(collection(db, "markets"), marketData);
 
