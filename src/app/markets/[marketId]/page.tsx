@@ -5,10 +5,14 @@ import { useParams, useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import {
   doc,
+  collection,
+  getDocs,
   runTransaction,
-  Timestamp,
   increment,
   onSnapshot,
+  orderBy,
+  query,
+  Timestamp,
 } from "firebase/firestore";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -23,6 +27,7 @@ import {
 } from "chart.js";
 import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
+import { format } from "date-fns";
 
 ChartJS.register(TimeScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
@@ -54,7 +59,7 @@ interface Market {
 interface Position {
   yesShares: number;
   noShares: number;
-  invested: number;
+  invested?: number;
 }
 
 interface PricePoint {
@@ -63,28 +68,47 @@ interface PricePoint {
   no: number;
 }
 
+/* =======================
+   PAGE
+======================= */
 export default function MarketDetailPage() {
   const params = useParams();
   const router = useRouter();
   const { user, credits } = useAuth();
 
   const marketIdRaw = params.marketId;
-  if (!marketIdRaw) return <p>No market selected.</p>;
-  const marketId = Array.isArray(marketIdRaw) ? marketIdRaw[0] : marketIdRaw;
+  const marketId = Array.isArray(marketIdRaw) ? marketIdRaw[0] : marketIdRaw ?? "";
+if (!marketId) return <p>No market selected.</p>;
+
+
 
   const [market, setMarket] = useState<Market | null>(null);
-  const [position, setPosition] = useState<Position>({
-    yesShares: 0,
-    noShares: 0,
-    invested: 0,
-  });
+  const [position, setPosition] = useState<Position>({ yesShares: 0, noShares: 0, invested: 0 });
   const [amount, setAmount] = useState(10);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [priceHistory, setPriceHistory] = useState<PricePoint[]>([]);
+  type TimeRange = "1D" | "1W" | "1M" | "ALL";
+const [timeRange, setTimeRange] = useState<TimeRange>("ALL");
+
   const [liveCost, setLiveCost] = useState(0);
+  
 
   const chartRef = useRef<any>(null);
+
+  /* =======================
+     FETCH HISTORICAL PRICES
+  ======================== */
+  useEffect(() => {
+    const loadHistory = async () => {
+      const priceCol = collection(db, "markets", marketId, "priceHistory");
+      const q = query(priceCol, orderBy("timestamp", "asc"));
+      const snap = await getDocs(q);
+      const history: PricePoint[] = snap.docs.map((d) => d.data() as PricePoint);
+      setPriceHistory(history);
+    };
+    loadHistory();
+  }, [marketId]);
 
   /* =======================
      REAL-TIME MARKET
@@ -98,13 +122,27 @@ export default function MarketDetailPage() {
       }
       const m = snap.data() as Market;
       setMarket(m);
-      setLoading(false);
 
+      // append live price point
       const yes = getYesPrice(m.yesShares, m.noShares, m.liquidity);
       const no = 1 - yes;
-      setPriceHistory((prev) => [...prev, { timestamp: Date.now(), yes, no }]);
-    });
+      setPriceHistory((prev) => {
+  if (prev.length === 0) {
+    return [{ timestamp: Date.now(), yes, no }];
+  }
 
+  const last = prev[prev.length - 1];
+
+  // only append if price actually changed
+  if (last.yes !== yes || last.no !== no) {
+    return [...prev, { timestamp: Date.now(), yes, no }];
+  }
+
+  return prev;
+});
+
+      setLoading(false);
+    });
     return () => unsubscribe();
   }, [marketId, router]);
 
@@ -118,12 +156,11 @@ export default function MarketDetailPage() {
       if (snap.exists()) setPosition(snap.data() as Position);
       else setPosition({ yesShares: 0, noShares: 0, invested: 0 });
     });
-
     return () => unsubscribe();
   }, [user, marketId]);
 
   /* =======================
-     PRICES
+     PRICES & VALUES
   ======================== */
   const yesPrice = useMemo(
     () => (market ? getYesPrice(market.yesShares, market.noShares, market.liquidity) : 0),
@@ -134,7 +171,7 @@ export default function MarketDetailPage() {
   const yesPayout = position.yesShares * yesPrice;
   const noPayout = position.noShares * noPrice;
 
-  const investedAmount = position.invested;
+  const investedAmount = position.invested ?? 0;
   const currentValue = position.yesShares * yesPrice + position.noShares * noPrice;
   const pnl = currentValue - investedAmount;
 
@@ -143,7 +180,7 @@ export default function MarketDetailPage() {
   }, [amount]);
 
   /* =======================
-     BUY
+     BUY FUNCTION
   ======================== */
   async function buy(side: "yes" | "no") {
     if (!user || !market || busy) return;
@@ -179,7 +216,7 @@ export default function MarketDetailPage() {
           tx.update(posRef, {
             yesShares: side === "yes" ? p.yesShares + shares : p.yesShares,
             noShares: side === "no" ? p.noShares + shares : p.noShares,
-            invested: increment(amount),
+            invested: (p.invested ?? 0) + amount,
           });
         } else {
           tx.set(posRef, {
@@ -190,6 +227,10 @@ export default function MarketDetailPage() {
             invested: amount,
           });
         }
+
+        // store price snapshot for chart history
+        const priceCol = collection(db, "markets", marketId, "priceHistory");
+        await tx.set(doc(priceCol), { timestamp: Date.now(), yes: price, no: 1 - price });
       });
     } finally {
       setBusy(false);
@@ -197,11 +238,10 @@ export default function MarketDetailPage() {
   }
 
   /* =======================
-     SELL (partial)
+     SELL FUNCTION
   ======================== */
   async function sell(side: "yes" | "no") {
     if (!user || !market || busy) return;
-
     const owned = side === "yes" ? position.yesShares : position.noShares;
     if (amount <= 0 || amount > owned) return alert("Invalid sell amount");
 
@@ -217,15 +257,11 @@ export default function MarketDetailPage() {
         if (!pSnap.exists()) throw new Error("No position");
 
         const m = mSnap.data()!;
-        const p = pSnap.data() as Position;
-
         const price = side === "yes"
           ? getYesPrice(m.yesShares, m.noShares, m.liquidity)
           : 1 - getYesPrice(m.yesShares, m.noShares, m.liquidity);
 
         const payout = amount * price;
-
-        const costFraction = (amount / owned) * p.invested; // proportion of invested amount sold
 
         tx.update(marketRef, {
           yesShares: side === "yes" ? m.yesShares - amount : m.yesShares,
@@ -234,26 +270,56 @@ export default function MarketDetailPage() {
 
         tx.update(posRef, {
           [`${side}Shares`]: increment(-amount),
-          invested: increment(-costFraction), // adjust invested
+          invested: (pSnap.data().invested ?? 0) - payout,
         });
 
         tx.update(userRef, { credits: increment(payout) });
+
+        // store price snapshot
+        const priceCol = collection(db, "markets", marketId, "priceHistory");
+        await tx.set(doc(priceCol), { timestamp: Date.now(), yes: yesPrice, no: noPrice });
       });
     } finally {
       setBusy(false);
     }
   }
+const filteredHistory = useMemo(() => {
+  if (timeRange === "ALL") return priceHistory;
 
+  const now = Date.now();
+  let cutoff = 0;
+
+  if (timeRange === "1D") cutoff = now - 24 * 60 * 60 * 1000;
+  if (timeRange === "1W") cutoff = now - 7 * 24 * 60 * 60 * 1000;
+  if (timeRange === "1M") cutoff = now - 30 * 24 * 60 * 60 * 1000;
+
+  return priceHistory.filter((p) => p.timestamp >= cutoff);
+}, [priceHistory, timeRange]);
   if (loading || !market) return <p className="p-6 text-center">Loading market…</p>;
 
   /* =======================
      CHART
   ======================== */
+
+
+
   const chartData = {
-    labels: priceHistory.map((p) => new Date(p.timestamp)),
+    labels: filteredHistory.map((p) => new Date(p.timestamp)),
     datasets: [
-      { label: "YES", data: priceHistory.map((p) => p.yes * 100), borderColor: "green", tension: 0.2 },
-      { label: "NO", data: priceHistory.map((p) => p.no * 100), borderColor: "red", tension: 0.2 },
+      {
+        label: "YES",
+        data: filteredHistory.map((p) => p.yes * 100),
+        borderColor: "green",
+        backgroundColor: "rgba(0,128,0,0.1)",
+        tension: 0.2,
+      },
+      {
+        label: "NO",
+        data: filteredHistory.map((p) => p.no * 100),
+        borderColor: "red",
+        backgroundColor: "rgba(255,0,0,0.1)",
+        tension: 0.2,
+      },
     ],
   };
 
@@ -262,85 +328,128 @@ export default function MarketDetailPage() {
     maintainAspectRatio: false,
     plugins: { legend: { position: "top" } },
     scales: {
-      x: { type: "time", time: { unit: "second" } },
-      y: { min: 0, max: 100, ticks: { callback: (v) => `${v}%` } },
+      x: {
+        type: "time",
+           grid: {
+        display: false,
+       
+      },
+        time: {
+          tooltipFormat: "PP p",
+          displayFormats: {
+            second: "p",
+            minute: "p",
+            hour: "ha",
+            day: "MMM d",
+            month: "MMM yyyy",
+          },
+        },
+      },
+      y: 
+      { min: 0, max: 100, 
+        grid: {
+        display: false,
+        
+      },
+        ticks: { callback: (v) => `${v}%` } },
     },
   };
 
+  /* =======================
+     JSX
+  ======================== */
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-4">
       <h1 className="text-2xl font-bold">{market.title}</h1>
       <p className="text-gray-600">{market.summary}</p>
 
-      <div className="h-56 mb-4">
+      <div className="flex gap-2 text-sm">
+  {(["1D", "1W", "1M", "ALL"] as TimeRange[]).map((r) => (
+    <button
+      key={r}
+      onClick={() => setTimeRange(r)}
+      className={`px-3 py-1 rounded border ${
+        timeRange === r ? "bg-black text-white" : "bg-white"
+      }`}
+    >
+      {r}
+    </button>
+  ))}
+</div>
+
+
+      <div className="h-56">
         <Line ref={chartRef} data={chartData} options={chartOptions} />
       </div>
 
-      {/* Polymarket-style YES/NO panels */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div className="bg-green-50 border border-green-400 rounded p-4 text-center">
-          <div className="text-xs text-gray-600 mb-1">YES Price</div>
-          <div className="text-2xl font-bold text-green-700">{(yesPrice*100).toFixed(1)}%</div>
-          <div className="text-sm text-gray-500 mt-1">{position.yesShares.toFixed(2)} shares</div>
-        </div>
-        <div className="bg-red-50 border border-red-400 rounded p-4 text-center">
-          <div className="text-xs text-gray-600 mb-1">NO Price</div>
-          <div className="text-2xl font-bold text-red-700">{(noPrice*100).toFixed(1)}%</div>
-          <div className="text-sm text-gray-500 mt-1">{position.noShares.toFixed(2)} shares</div>
-        </div>
+      <div className="flex gap-4">
+        <span>YES {(yesPrice * 100).toFixed(1)}%</span>
+        <span>NO {(noPrice * 100).toFixed(1)}%</span>
       </div>
 
-      {/* Buy/Sell controls */}
-      <div className="grid grid-cols-4 gap-2 mb-4">
-        <input
-          type="number"
-          value={amount}
-          min={1}
-          onChange={(e) => setAmount(Number(e.target.value))}
-          className="border px-3 py-2 rounded col-span-4"
-          placeholder="Amount (credits)"
-        />
+      <input
+        type="number"
+        value={amount}
+        min={1}
+        onChange={(e) => setAmount(Number(e.target.value))}
+        className="border px-3 py-2 rounded w-40"
+      />
 
-        <button onClick={() => buy("yes")} disabled={busy} className="bg-green-500 text-white p-2 rounded col-span-2">
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => buy("yes")}
+          disabled={busy}
+          className="bg-green-500 text-white p-2 rounded"
+        >
           Buy YES
         </button>
-        <button onClick={() => sell("yes")} disabled={busy || amount > position.yesShares} className="border p-2 rounded col-span-2">
+        <button
+          onClick={() => sell("yes")}
+          disabled={busy || amount > position.yesShares}
+          className="border p-2 rounded"
+        >
           Sell YES
         </button>
 
-        <button onClick={() => buy("no")} disabled={busy} className="bg-red-500 text-white p-2 rounded col-span-2">
+        <button
+          onClick={() => buy("no")}
+          disabled={busy}
+          className="bg-red-500 text-white p-2 rounded"
+        >
           Buy NO
         </button>
-        <button onClick={() => sell("no")} disabled={busy || amount > position.noShares} className="border p-2 rounded col-span-2">
+        <button
+          onClick={() => sell("no")}
+          disabled={busy || amount > position.noShares}
+          className="border p-2 rounded"
+        >
           Sell NO
         </button>
       </div>
 
-      {/* Position & P/L card */}
-     <div className="border rounded p-4 bg-gray-50 space-y-2">
-  <div className="flex justify-between">
-    <span>YES shares:</span>
-    <span>{(position.yesShares ?? 0).toFixed(2)} × {(yesPrice*100).toFixed(1)}%</span>
-  </div>
-  <div className="flex justify-between">
-    <span>NO shares:</span>
-    <span>{(position.noShares ?? 0).toFixed(2)} × {(noPrice*100).toFixed(1)}%</span>
-  </div>
-  <hr className="my-2" />
-  <div className="flex justify-between">
-    <span>Invested:</span>
-    <span>{(position.invested ?? 0).toFixed(2)} credits</span>
-  </div>
-  <div className="flex justify-between">
-    <span>Current value:</span>
-    <span>{currentValue.toFixed(2)} credits</span>
-  </div>
-  <div className={`flex justify-between font-semibold ${pnl>=0?'text-green-600':'text-red-600'}`}>
-    <span>P/L:</span>
-    <span>{pnl>=0?'+':''}{pnl.toFixed(2)} credits</span>
-  </div>
-</div>
+      <div className="border p-4 rounded text-sm space-y-1">
+        <p>
+          YES shares: {position.yesShares.toFixed(2)} × {(yesPrice * 100).toFixed(1)}%
+        </p>
+        <p>
+          NO shares: {position.noShares.toFixed(2)} × {(noPrice * 100).toFixed(1)}%
+        </p>
 
+        <hr className="my-2" />
+
+        <p>
+          Invested: <b>{investedAmount.toFixed(2)}</b> credits
+        </p>
+
+        <p>
+          Current value: <b>{currentValue.toFixed(2)}</b> credits
+        </p>
+
+        <p className={`font-semibold ${pnl >= 0 ? "text-green-600" : "text-red-600"}`}>
+          P/L: {pnl >= 0 ? "+" : ""}
+          {pnl.toFixed(2)} credits
+        </p>
+      </div>
     </div>
   );
 }
